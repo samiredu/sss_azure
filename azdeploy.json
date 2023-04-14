@@ -1,0 +1,237 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "vmSize": {
+            "type": "string",
+            "defaultValue": "Standard_DS1_v2",
+            "metadata": {
+                "description": "VM size"
+            }
+        },
+        "vmName": {
+            "type": "string",
+            "defaultValue": "VM",
+            "metadata": {
+                "description": "VM name Prefix"
+            }
+        },
+        "vmCount": {
+            "type": "int",
+            "defaultValue": 2,
+            "metadata": {
+                "description": "Number of VMs"
+            }
+        },
+        "adminUsername": {
+            "type": "string",
+            "metadata": {
+                "description": "Admin username"
+            }
+        },
+        "adminPassword": {
+            "type": "securestring",
+            "metadata": {
+                "description": "Admin password"
+            }
+        },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Resource location"
+      }
+    
+    },
+	"virtualNetworkNewOrExisting": {
+      "type": "string",
+	  "defaultValue": "Existing",
+      "metadata": {
+        "description": "Boolean indicating whether the VNet is new or existing"
+      }
+    },
+        "virtualNetworkName": {
+            "type": "string",
+            "defaultValue": "EMEA-vNet2",
+            "metadata": {
+                "description": "Virtual network name"
+            }
+        }
+    },
+    "variables": {
+        "vmExtensionName": "IIS",
+        "vmName": "[parameters('vmName')]",
+        "availabilitySetName": "AVS1",
+        "nic": "vmvnic",
+        "virtualNetworkName": "[parameters('virtualNetworkName')]",
+        "subnetName": "subnet",
+        "subnet1Name": "subnet1",
+        "subnet2Name": "subnet2",
+        "computeApiVersion": "2018-06-01",
+        "networkApiVersion": "2018-08-01"
+    },
+    "resources": [
+            {
+      "type": "Microsoft.Compute/availabilitySets",
+      "name": "[variables('availabilitySetName')]",
+      "apiVersion": "2016-04-30-preview",
+      "location": "[parameters('location')]",
+      "properties": {
+        "platformFaultDomainCount": 2,
+        "platformUpdateDomainCount": 5,
+        "managed": true
+      }
+    },
+        {
+            "name": "[concat(parameters('vmName'),copyIndex(1))]",
+            "copy": {
+                "name": "VMcopy",
+                "count": "[parameters('vmCount')]"
+            },
+            "type": "Microsoft.Compute/virtualMachines",
+            "apiVersion": "[variables('computeApiVersion')]",
+            "location": "[resourceGroup().location]",
+            "comments": "Creating VMs",
+            "dependsOn": [
+                "[concat(variables('nic'),copyIndex(1))]",
+				"[resourceId('Microsoft.Compute/availabilitySets', variables('availabilitySetName'))]"
+            ],
+            "properties": {
+                "osProfile": {
+                    "computerName": "[concat(parameters('vmName'),copyIndex(1))]",
+                    "adminUsername": "[parameters('adminUsername')]",
+                    "adminPassword": "[parameters('adminPassword')]",
+                    "windowsConfiguration": {
+                        "provisionVmAgent": "true"
+                    }
+                },
+                "availabilitySet": {
+          "id": "[resourceId('Microsoft.Compute/availabilitySets', variables('availabilitySetName'))]"
+                                    },
+                "hardwareProfile": {
+                    "vmSize": "[parameters('vmSize')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "publisher": "MicrosoftWindowsServer",
+                        "offer": "WindowsServer",
+                        "sku": "2019-Datacenter",
+                        "version": "latest"
+                    },
+                    "osDisk": {
+                        "createOption": "fromImage"
+                    },
+                    "dataDisks": []
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "properties": {
+                                "primary": true
+                            },
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', concat(variables('nic'),copyIndex(1)))]"
+                        }
+                    ]
+                }
+            }
+        },        
+        {
+            "condition": "[equals(parameters('virtualNetworkNewOrExisting'),'existing')]",
+            "type": "Microsoft.Network/virtualNetworks",
+            "name": "[variables('virtualNetworkName')]",
+            "apiVersion": "[variables('networkApiVersion')]",
+            "location": "[resourceGroup().location]",
+            "comments": "Virtual Network",
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "10.3.0.0/16"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[variables('subnet1Name')]",
+                        "properties": {
+                            "addressPrefix": "10.3.0.0/24"
+                        }
+                    },
+                    {
+                        "name": "[variables('subnet2Name')]",
+                        "properties": {
+                            "addressPrefix": "10.3.1.0/24"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "[concat(variables('nic'),copyIndex(1))]",
+            "copy":{
+                "name": "nicCopy",
+                "count": "[parameters('vmCount')]"
+            },
+            "type": "Microsoft.Network/networkInterfaces",
+            "apiVersion": "[variables('networkApiVersion')]",
+            "location": "[resourceGroup().location]",
+            "comments": "Primary NIC",
+            "dependsOn": [
+                "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]"
+            ],
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig1",
+                        "properties": {
+                            "subnet": {
+                                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('virtualNetworkName'), concat(variables('subnetName'),copyIndex(1)))]"
+                            },
+                            "privateIPAllocationMethod": "Dynamic"
+                        }
+                    }
+                ]
+            }
+        },
+                {
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "name": "VM1/customScriptExtension",
+            "apiVersion": "2018-06-01",
+            "location": "[resourceGroup().location]",
+            "dependsOn": ["VM1"],
+            "properties": {
+                "publisher": "Microsoft.Compute",
+                "type": "CustomScriptExtension",
+                "typeHandlerVersion": "1.7",
+                "autoUpgradeMinorVersion": true,
+                "settings": {
+                    "commandToExecute": "powershell.exe Install-WindowsFeature -name Web-Server -IncludeManagementTools && powershell.exe remove-item 'C:\\inetpub\\wwwroot\\iisstart.htm' && powershell.exe Add-Content -Path 'C:\\inetpub\\wwwroot\\iisstart.htm' -Value $('Hello World from ' + $env:computername) && powershell Add-WindowsFeature Routing && powershell set-netipinterface -forwarding enabled && powershell Set-NetFirewallProfile -Enabled False"
+              }
+            }
+        },
+                        {
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "name": "VM2/customScriptExtension",
+            "apiVersion": "2018-06-01",
+            "location": "[resourceGroup().location]",
+            "dependsOn": ["VM2"],
+            "properties": {
+                "publisher": "Microsoft.Compute",
+                "type": "CustomScriptExtension",
+                "typeHandlerVersion": "1.7",
+                "autoUpgradeMinorVersion": true,
+                "settings": {
+                    "commandToExecute": "powershell.exe Install-WindowsFeature -name Web-Server -IncludeManagementTools && powershell.exe remove-item 'C:\\inetpub\\wwwroot\\iisstart.htm' && powershell.exe Add-Content -Path 'C:\\inetpub\\wwwroot\\iisstart.htm' -Value $('Hello World from ' + $env:computername) && powershell Set-NetFirewallProfile -Enabled False"
+              }
+            }
+        }
+    ],
+    "outputs": {
+        "adminUsername": {
+            "type": "string",
+            "value": "[parameters('adminUsername')]"
+        },
+                "adminPassword": {
+            "type": "string",
+            "value": "[parameters('adminPassword')]"
+        }
+    }
+}
